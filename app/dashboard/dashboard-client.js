@@ -17,14 +17,22 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
   const [search, setSearch] = useState('')
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return jobs
-    const q = search.toLowerCase()
-    return jobs.filter(j =>
-      j.title?.toLowerCase().includes(q) ||
-      j.company?.toLowerCase().includes(q) ||
-      j.location?.toLowerCase().includes(q)
-    )
-  }, [jobs, search])
+    return jobs.filter(j => {
+      if (search.trim()) {
+        const q = search.toLowerCase()
+        const matchText =
+          j.title?.toLowerCase().includes(q) ||
+          j.company?.toLowerCase().includes(q) ||
+          j.location?.toLowerCase().includes(q)
+        if (!matchText) return false
+      }
+      if (workModel === 'remoto' && !j.remote) return false
+      if (workModel === 'presencial' && j.remote) return false
+      if (market === 'nacional' && j.market !== 'nacional') return false
+      if (market === 'internacional' && j.market !== 'internacional') return false
+      return true
+    })
+  }, [jobs, search, workModel, market])
 
   async function savePreferences() {
     const supabase = createClient()
