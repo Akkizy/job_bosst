@@ -93,3 +93,6 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
   .dash { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
 }
+
+.tag-nacional { background: #1a2e1a; color: #4ade80; }
+.tag-internacional { background: #1a1a2e; color: #818cf8; }
