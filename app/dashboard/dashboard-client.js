@@ -7,6 +7,7 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
   const router = useRouter()
   const [jobTitle, setJobTitle] = useState(initialPreference?.job_title || '')
   const [workModel, setWorkModel] = useState(initialPreference?.work_model || 'qualquer')
+  const [market, setMarket] = useState(initialPreference?.market || 'ambos')
   const [salaryMin, setSalaryMin] = useState(initialPreference?.salary_min || '')
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -25,15 +26,19 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
     )
   }, [jobs, search])
 
+  async function savePreferences() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    return supabase.from('preferences').upsert(
+      { user_id: user.id, job_title: jobTitle, work_model: workModel, market, salary_min: salaryMin || null },
+      { onConflict: 'user_id' }
+    )
+  }
+
   async function handleSave(e) {
     e.preventDefault()
     setSaving(true); setSaved(false); setSaveErr('')
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('preferences').upsert(
-      { user_id: user.id, job_title: jobTitle, work_model: workModel, salary_min: salaryMin || null },
-      { onConflict: 'user_id' }
-    )
+    const { error } = await savePreferences()
     setSaving(false)
     if (error) { setSaveErr('Erro ao salvar.'); return }
     setSaved(true)
@@ -41,66 +46,67 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
 
   async function handleSearch() {
     if (!jobTitle.trim()) { setSaveErr('Preencha o cargo antes de buscar.'); return }
-    setSaveErr('')
-    setSearching(true)
-
-    // Salva preferências primeiro
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('preferences').upsert(
-      { user_id: user.id, job_title: jobTitle, work_model: workModel, salary_min: salaryMin || null },
-      { onConflict: 'user_id' }
-    )
-
-    // Chama a rota de match
+    setSaveErr(''); setSearching(true); setSaved(false)
+    await savePreferences()
     try {
       const res = await fetch('/api/match-jobs', { method: 'POST' })
       const data = await res.json()
       if (data.jobs) setJobs(data.jobs)
-    } catch (e) {
-      console.error(e)
-    }
+      setSaved(true)
+    } catch (e) { console.error(e) }
     setSearching(false)
-    setSaved(true)
   }
 
   async function handleSignOut() {
     const supabase = createClient()
     await supabase.auth.signOut()
-    router.push('/login')
-    router.refresh()
+    router.push('/login'); router.refresh()
   }
 
-  function tagModel(remote) {
-    if (remote) return <span className="tag tag-remote">🌐 Remoto</span>
-    return <span className="tag tag-onsite">🏢 Presencial</span>
+  function MarketTag({ market }) {
+    if (market === 'nacional') return <span className="tag tag-nacional">🇧🇷 Nacional</span>
+    if (market === 'internacional') return <span className="tag tag-internacional">🌎 Internacional</span>
+    return null
+  }
+
+  function ModelTag({ remote }) {
+    return remote
+      ? <span className="tag tag-remote">🌐 Remoto</span>
+      : <span className="tag tag-onsite">🏢 Presencial</span>
   }
 
   return (
     <div className="dash">
-      {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo">vagas<span>.diárias</span></div>
         <div className="user-pill">👤 {userEmail}</div>
 
         <div>
-          <p className="section-title">🎯 Suas preferências</p>
+          <p className="section-title">🎯 Preferências</p>
           <div className="filter-group">
             <input
               type="text"
-              placeholder="Cargo desejado (ex: UX Designer)"
+              placeholder="Cargo (ex: Dev Backend, Designer...)"
               value={jobTitle}
               onChange={e => setJobTitle(e.target.value)}
             />
+
+            <select value={market} onChange={e => setMarket(e.target.value)}>
+              <option value="ambos">🌍 Nacional + Internacional</option>
+              <option value="nacional">🇧🇷 Só Nacional (Brasil)</option>
+              <option value="internacional">🌎 Só Internacional</option>
+            </select>
+
             <select value={workModel} onChange={e => setWorkModel(e.target.value)}>
               <option value="qualquer">🔀 Qualquer modelo</option>
               <option value="remoto">🌐 Remoto</option>
               <option value="hibrido">🔁 Híbrido</option>
               <option value="presencial">🏢 Presencial</option>
             </select>
+
             <input
               type="number"
-              placeholder="Salário mínimo (USD, opcional)"
+              placeholder="Salário mínimo (opcional)"
               value={salaryMin}
               onChange={e => setSalaryMin(e.target.value)}
             />
@@ -109,14 +115,13 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
           {saved && <p className="save-msg" style={{marginTop:8}}>✓ Preferências salvas</p>}
         </div>
 
-        <button className="btn-search" onClick={handleSearch} disabled={searching || saving}>
+        <button className="btn-search" onClick={handleSearch} disabled={searching}>
           {searching ? '⏳ Buscando...' : '🔍 Buscar vagas agora'}
         </button>
 
         <button
           style={{padding:'8px',background:'transparent',color:'#9090a8',border:'1px solid #2e2e3e',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}
-          onClick={handleSave}
-          disabled={saving}
+          onClick={handleSave} disabled={saving}
         >
           {saving ? 'Salvando...' : '💾 Só salvar preferências'}
         </button>
@@ -124,7 +129,6 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
         <button className="btn-signout" onClick={handleSignOut}>Sair →</button>
       </aside>
 
-      {/* MAIN */}
       <main className="main">
         <div className="main-header">
           <h1>Vagas para você <span className="badge">{filtered.length}</span></h1>
@@ -153,13 +157,16 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
                 <div className="job-card-header">
                   <span className="job-title">{job.title}</span>
                   {job.salary_min && (
-                    <span className="job-salary">💰 ${job.salary_min.toLocaleString()}</span>
+                    <span className="job-salary">
+                      {job.market === 'nacional' ? `R$ ${job.salary_min.toLocaleString('pt-BR')}` : `$${job.salary_min.toLocaleString()}`}
+                    </span>
                   )}
                 </div>
                 <div className="job-meta">
                   <span className="job-company">🏢 {job.company}</span>
                   <span className="job-company">📍 {job.location}</span>
-                  {tagModel(job.remote)}
+                  <ModelTag remote={job.remote} />
+                  <MarketTag market={job.market} />
                   <span className="tag tag-source">{job.source}</span>
                 </div>
                 <a className="job-link" href={job.url} target="_blank" rel="noopener noreferrer">
