@@ -1,27 +1,67 @@
 'use client'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 
 export default function DashboardClient({ userEmail, initialPreference, initialJobs }) {
   const router = useRouter()
   const [jobTitle, setJobTitle] = useState(initialPreference?.job_title || '')
-  const [workModel, setWorkModel] = useState(initialPreference?.work_model || 'remoto')
+  const [workModel, setWorkModel] = useState(initialPreference?.work_model || 'qualquer')
+  const [salaryMin, setSalaryMin] = useState(initialPreference?.salary_min || '')
   const [saving, setSaving] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
+  const [saveErr, setSaveErr] = useState('')
+  const [jobs, setJobs] = useState(initialJobs)
+  const [search, setSearch] = useState('')
 
-  async function handleSavePreferences(e) {
+  const filtered = useMemo(() => {
+    if (!search.trim()) return jobs
+    const q = search.toLowerCase()
+    return jobs.filter(j =>
+      j.title?.toLowerCase().includes(q) ||
+      j.company?.toLowerCase().includes(q) ||
+      j.location?.toLowerCase().includes(q)
+    )
+  }, [jobs, search])
+
+  async function handleSave(e) {
     e.preventDefault()
-    setSaving(true); setError(''); setSaved(false)
+    setSaving(true); setSaved(false); setSaveErr('')
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('preferences')
-      .upsert({ user_id: user.id, job_title: jobTitle, work_model: workModel }, { onConflict: 'user_id' })
+    const { error } = await supabase.from('preferences').upsert(
+      { user_id: user.id, job_title: jobTitle, work_model: workModel, salary_min: salaryMin || null },
+      { onConflict: 'user_id' }
+    )
     setSaving(false)
-    if (error) { setError('Não foi possível salvar. Tente novamente.'); return }
+    if (error) { setSaveErr('Erro ao salvar.'); return }
     setSaved(true)
-    router.refresh()
+  }
+
+  async function handleSearch() {
+    if (!jobTitle.trim()) { setSaveErr('Preencha o cargo antes de buscar.'); return }
+    setSaveErr('')
+    setSearching(true)
+
+    // Salva preferências primeiro
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('preferences').upsert(
+      { user_id: user.id, job_title: jobTitle, work_model: workModel, salary_min: salaryMin || null },
+      { onConflict: 'user_id' }
+    )
+
+    // Chama a rota de match
+    try {
+      const res = await fetch('/api/match-jobs', { method: 'POST' })
+      const data = await res.json()
+      if (data.jobs) setJobs(data.jobs)
+    } catch (e) {
+      console.error(e)
+    }
+    setSearching(false)
+    setSaved(true)
   }
 
   async function handleSignOut() {
@@ -31,49 +71,105 @@ export default function DashboardClient({ userEmail, initialPreference, initialJ
     router.refresh()
   }
 
+  function tagModel(remote) {
+    if (remote) return <span className="tag tag-remote">🌐 Remoto</span>
+    return <span className="tag tag-onsite">🏢 Presencial</span>
+  }
+
   return (
-    <div className="wrap-wide">
-      <div className="topbar">
+    <div className="dash">
+      {/* SIDEBAR */}
+      <aside className="sidebar">
         <div className="logo">vagas<span>.diárias</span></div>
-        <button className="signout" onClick={handleSignOut}>Sair</button>
-      </div>
-      <div className="pref-card">
-        <h2>Suas preferências</h2>
-        <p className="hint">Vamos buscar vagas todo dia com base nisso.</p>
-        <form onSubmit={handleSavePreferences}>
-          <label htmlFor="jobTitle">Cargo desejado</label>
-          <input id="jobTitle" type="text" required
-            placeholder="ex: Product Designer, Analista Financeiro, Dev Backend..."
-            value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-          <label htmlFor="workModel">Modelo de trabalho</label>
-          <select id="workModel" value={workModel} onChange={(e) => setWorkModel(e.target.value)}>
-            <option value="remoto">Remoto</option>
-            <option value="hibrido">Híbrido</option>
-            <option value="presencial">Presencial</option>
-            <option value="qualquer">Qualquer um</option>
-          </select>
-          {error && <div className="error">{error}</div>}
-          {saved && <div className="success">Preferências salvas.</div>}
-          <button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar preferências'}</button>
-        </form>
-      </div>
-      <p className="section-label">Vagas encontradas para você ({initialJobs.length})</p>
-      {initialJobs.length === 0 ? (
-        <div className="empty-state">
-          Nenhuma vaga encontrada ainda.<br />
-          A busca roda automaticamente todo dia — volte amanhã ou ajuste suas preferências.
+        <div className="user-pill">👤 {userEmail}</div>
+
+        <div>
+          <p className="section-title">🎯 Suas preferências</p>
+          <div className="filter-group">
+            <input
+              type="text"
+              placeholder="Cargo desejado (ex: UX Designer)"
+              value={jobTitle}
+              onChange={e => setJobTitle(e.target.value)}
+            />
+            <select value={workModel} onChange={e => setWorkModel(e.target.value)}>
+              <option value="qualquer">🔀 Qualquer modelo</option>
+              <option value="remoto">🌐 Remoto</option>
+              <option value="hibrido">🔁 Híbrido</option>
+              <option value="presencial">🏢 Presencial</option>
+            </select>
+            <input
+              type="number"
+              placeholder="Salário mínimo (USD, opcional)"
+              value={salaryMin}
+              onChange={e => setSalaryMin(e.target.value)}
+            />
+          </div>
+          {saveErr && <p className="save-err" style={{marginTop:8}}>{saveErr}</p>}
+          {saved && <p className="save-msg" style={{marginTop:8}}>✓ Preferências salvas</p>}
         </div>
-      ) : (
-        <div className="job-list">
-          {initialJobs.map((job) => (
-            <div className="job-card" key={job.id}>
-              <p className="job-title">{job.title}</p>
-              <p className="job-meta">{job.company} · {job.location}{job.salary_min ? ` · a partir de $${job.salary_min}` : ''}</p>
-              <a className="apply" href={job.url} target="_blank" rel="noopener noreferrer">Ver vaga →</a>
-            </div>
-          ))}
+
+        <button className="btn-search" onClick={handleSearch} disabled={searching || saving}>
+          {searching ? '⏳ Buscando...' : '🔍 Buscar vagas agora'}
+        </button>
+
+        <button
+          style={{padding:'8px',background:'transparent',color:'#9090a8',border:'1px solid #2e2e3e',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}
+          onClick={handleSave}
+          disabled={saving}
+        >
+          {saving ? 'Salvando...' : '💾 Só salvar preferências'}
+        </button>
+
+        <button className="btn-signout" onClick={handleSignOut}>Sair →</button>
+      </aside>
+
+      {/* MAIN */}
+      <main className="main">
+        <div className="main-header">
+          <h1>Vagas para você <span className="badge">{filtered.length}</span></h1>
         </div>
-      )}
+
+        <input
+          className="search-bar"
+          placeholder="🔎 Filtrar por título, empresa ou localização..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+
+        {searching && <div className="spinner" />}
+
+        {!searching && filtered.length === 0 && (
+          <div className="empty">
+            <h3>Nenhuma vaga encontrada</h3>
+            <p>Configure seu cargo e clique em <strong>"Buscar vagas agora"</strong><br/>para ver as vagas que combinam com seu perfil.</p>
+          </div>
+        )}
+
+        {!searching && filtered.length > 0 && (
+          <div className="jobs-grid">
+            {filtered.map(job => (
+              <div className="job-card" key={job.id}>
+                <div className="job-card-header">
+                  <span className="job-title">{job.title}</span>
+                  {job.salary_min && (
+                    <span className="job-salary">💰 ${job.salary_min.toLocaleString()}</span>
+                  )}
+                </div>
+                <div className="job-meta">
+                  <span className="job-company">🏢 {job.company}</span>
+                  <span className="job-company">📍 {job.location}</span>
+                  {tagModel(job.remote)}
+                  <span className="tag tag-source">{job.source}</span>
+                </div>
+                <a className="job-link" href={job.url} target="_blank" rel="noopener noreferrer">
+                  Ver vaga →
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
     </div>
   )
 }
